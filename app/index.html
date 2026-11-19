@@ -3,77 +3,60 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vice Coast Cover Studio — GTA 6-style cover art maker</title>
+<meta name="description" content="Vice Coast Cover Studio — turn your photo into GTA 6-style cover art: multi-panel layouts, Vice City sunset grades, bold caption lettering, PNG export. Offline, in your browser.">
+<title>Vice Coast Cover Studio — GTA 6-style cover maker</title>
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand"><span class="brand-mark">VICE COAST</span><span class="brand-sub">Cover Studio</span></div>
-  <p class="tagline">Your photo + a caption &rarr; a Vice City sunset poster.</p>
+<noscript><p style="padding:16px">Vice Coast Cover Studio draws your cover with JavaScript — please enable it and reload.</p></noscript>
+<header class="top">
+  <div>
+    <h1>VICE COAST <span>Cover Studio</span></h1>
+    <p class="tag">Turn your photo into GTA 6-style cover art. Pick a layout, a sunset grade, write your caption, export a PNG.</p>
+  </div>
+  <p class="judge-note">Made for the make.fun GTA 6 cover art bounty — every cover is drawn live in your browser from your own photo. Nothing is uploaded.</p>
 </header>
-<main class="studio">
-  <section class="panel controls" aria-label="Cover controls">
-    <h2>1 &middot; Photos</h2>
-    <label class="file-btn">Add photos <input id="photo-input" type="file" accept="image/*" multiple></label>
-    <div class="sample-row">
-      <button id="sample-boulevard" type="button">Sample: Boulevard</button>
-      <button id="sample-pier" type="button">Sample: Pier</button>
-    </div>
-    <div id="photo-strip" class="photo-strip" aria-label="Photos to use"></div>
-    <p class="hint">Click a panel in the preview, then pick a photo for it. &ldquo;One photo everywhere&rdquo; fills every panel with the same shot.</p>
-    <button id="fill-all" type="button">One photo everywhere</button>
-
-    <h2>2 &middot; Layout</h2>
-    <div id="layout-row" class="choice-row" role="group" aria-label="Panel layout">
-      <button data-layout="nine" type="button">Nine-panel grid</button>
-      <button data-layout="hero" type="button">Hero + three</button>
-      <button data-layout="bleed" type="button">Full-bleed</button>
-      <button data-layout="tilted" type="button">Tilted snapshots</button>
-    </div>
-
-    <h2>3 &middot; Sunset grade</h2>
-    <div id="grade-row" class="choice-row" role="group" aria-label="Colour grade">
-      <button data-grade="vice" type="button">Vice Sunset</button>
-      <button data-grade="neon" type="button">Neon Nights</button>
-      <button data-grade="pink" type="button">Hot Pink</button>
-      <button data-grade="dusk" type="button">Palm Dusk</button>
-      <button data-grade="drive" type="button">Ocean Drive</button>
-      <button data-grade="chrome" type="button">Midnight Chrome</button>
-    </div>
-
-    <h2>4 &middot; Lettering</h2>
-    <label class="field">Title <input id="title-input" type="text" maxlength="24" value="NEON NIGHTS"></label>
-    <label class="field">Subtitle (neon script) <input id="subtitle-input" type="text" maxlength="40" value="Vice City nights"></label>
-    <label class="field">Badge ribbon <input id="badge-input" type="text" maxlength="18" value="SUNSET STRIP"></label>
-    <div class="field">Heat
-      <span id="heat-stars" class="heat-stars" role="group" aria-label="Star heat meter">
-        <button data-heat="1" type="button" aria-label="1 star">&#9733;</button><button data-heat="2" type="button" aria-label="2 stars">&#9733;</button><button data-heat="3" type="button" aria-label="3 stars">&#9733;</button><button data-heat="4" type="button" aria-label="4 stars">&#9733;</button><button data-heat="5" type="button" aria-label="5 stars">&#9733;</button>
-      </span>
-    </div>
-    <label class="check"><input id="grain-toggle" type="checkbox" checked> Film grain</label>
-    <label class="check"><input id="vignette-toggle" type="checkbox" checked> Vignette</label>
-
-    <h2>5 &middot; Crop the selected panel</h2>
-    <label class="field">Zoom <input id="zoom-slider" type="range" min="1" max="3" step="0.01" value="1"></label>
-    <p class="hint">Drag the photo inside the preview to move it. The slider zooms the selected panel.</p>
+<main class="layout">
+  <section class="stage-wrap">
+    <canvas id="stage" width="1920" height="1080"></canvas>
+    <p class="stage-hint" id="panelLabel">Loading your cover…</p>
   </section>
-
-  <section class="panel preview-wrap" aria-label="Live preview">
-    <div class="preview-sizes" role="group" aria-label="Preview size">
-      <button data-preview="square" type="button">Square 1080&times;1080</button>
-      <button data-preview="portrait" type="button">Portrait 1080&times;1350</button>
-      <button data-preview="wide" type="button">Wide 1920&times;1080</button>
-    </div>
-    <canvas id="preview" width="1080" height="1080" aria-label="Live cover preview"></canvas>
-    <p id="status" role="status">Add a photo to begin.</p>
-    <div class="export-row">
-      <button id="export-all" type="button">Export all three PNGs</button>
-      <button data-export="square" type="button">1080 &times; 1080</button>
-      <button data-export="portrait" type="button">1080 &times; 1350</button>
-      <button data-export="wide" type="button">1920 &times; 1080</button>
-    </div>
-  </section>
+  <aside class="controls">
+    <section class="card">
+      <h2>1 · Photos</h2>
+      <div class="row">
+        <label class="btn" for="photoInput">Add photos</label>
+        <input id="photoInput" type="file" accept="image/*" multiple hidden>
+        <button id="samplePier" class="btn ghost" type="button">Sample: Pier</button>
+        <button id="sampleBoulevard" class="btn ghost" type="button">Sample: Boulevard</button>
+      </div>
+      <div id="thumbs" class="thumbs"></div>
+      <p class="hint">Click a photo to put it in the selected panel. <button id="fillBtn" class="link" type="button">Fill all panels with it</button></p>
+    </section>
+    <section class="card">
+      <h2>2 · Layout</h2>
+      <div id="layoutRow" class="choices"></div>
+    </section>
+    <section class="card">
+      <h2>3 · Sunset grade</h2>
+      <div id="gradeRow" class="choices"></div>
+    </section>
+    <section class="card">
+      <h2>4 · Caption &amp; crop</h2>
+      <label class="field">Main caption <input id="captionInput" type="text" maxlength="24" value="VICE COAST"></label>
+      <label class="field">Sub-caption <input id="subInput" type="text" maxlength="40" value="a vice city story"></label>
+      <label class="field">Zoom selected panel <input id="zoomRange" type="range" min="100" max="300" value="100"></label>
+      <div class="row"><button id="fitBtn" class="btn ghost" type="button">Reset crop</button></div>
+    </section>
+    <section class="card">
+      <h2>5 · Export</h2>
+      <div id="sizeRow" class="choices"></div>
+      <button id="exportBtn" class="btn big" type="button">Export PNG</button>
+      <p class="hint">Square 1080×1080 · Portrait 1080×1350 · Wide 1920×1080. The PNG is drawn fresh at full size.</p>
+    </section>
+  </aside>
 </main>
+<footer><p>Offline by design — your photos never leave this page. Fonts: Bebas Neue, Anton and Pacifico under the SIL Open Font License.</p></footer>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

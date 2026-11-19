@@ -1,99 +1,69 @@
-// Panel layouts: where each photo panel sits on the cover.
-//
-// A layout is a list of panels in unit coordinates (x, y, w, h from 0 to 1).
-// Each panel may carry a rotation in degrees (the tilted snapshots) and a
-// role: 'hero' panels anchor the title block, 'backdrop' panels sit behind
-// the snapshots in the tilted layout. Pixel rects come from panelsForLayout;
-// panelAt answers "which panel is under this point" for click-to-select.
+// panel-layouts.js — the four multi-panel poster layouts of Vice Coast Cover
+// Studio. A layout is a function of the cover size that returns the photo
+// panels as rectangles in cover pixels. The bottom of the cover is always
+// reserved for the caption band (see CAPTION_BAND); the panels fill the
+// space above it. The renderer insets every panel by half the gutter so a
+// clean cream gutter runs between neighbouring panels.
+
+export const CAPTION_BAND = 0.24; // fraction of the cover height for captions
+
+// The caption band as a rectangle: the strip at the bottom of the cover
+// where the wash and the big type live.
+export function captionBandRect(W, H) {
+  return { x: 0, y: H * (1 - CAPTION_BAND), w: W, h: H * CAPTION_BAND };
+}
 
 export const LAYOUTS = [
-  { id: 'nine', label: 'Nine-panel grid' },
-  { id: 'hero', label: 'Hero + three' },
-  { id: 'bleed', label: 'Full-bleed' },
-  { id: 'tilted', label: 'Tilted snapshots' },
+  { id: 'hero', name: 'Hero', hint: 'One big photo, caption below' },
+  { id: 'duo', name: 'Duo', hint: 'Two tall panels side by side' },
+  { id: 'triptych', name: 'Triptych', hint: 'Three vertical strips' },
+  { id: 'collage', name: 'Collage', hint: 'One tall panel, two stacked' },
 ];
 
-const GUTTER = 0.014;
+export function layoutById(id) {
+  return LAYOUTS.find((entry) => entry.id === id) ?? LAYOUTS[0];
+}
 
-// Nine-panel grid: a 3 x 3 comic grid with thin white gutters.
-function ninePanels() {
-  const cells = [];
-  const step = (1 - GUTTER * 4) / 3;
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 3; col++) {
-      cells.push({
-        x: GUTTER + col * (step + GUTTER),
-        y: GUTTER + row * (step + GUTTER),
-        w: step,
-        h: step,
-        role: row === 0 && col === 0 ? 'hero' : 'cell',
-        rotate: 0,
-      });
+export function gutterFor(width) {
+  return Math.max(3, Math.round(width / 360));
+}
+
+export function layoutPanels(id, W, H) {
+  const photoH = H * (1 - CAPTION_BAND);
+  switch (id) {
+    case 'duo':
+      return [
+        { x: 0, y: 0, w: W * 0.56, h: photoH },
+        { x: W * 0.56, y: 0, w: W * 0.44, h: photoH },
+      ];
+    case 'triptych': {
+      const third = W / 3;
+      return [
+        { x: 0, y: 0, w: third, h: photoH },
+        { x: third, y: 0, w: third, h: photoH },
+        { x: third * 2, y: 0, w: third, h: photoH },
+      ];
     }
+    case 'collage':
+      return [
+        { x: 0, y: 0, w: W * 0.55, h: photoH },
+        { x: W * 0.55, y: 0, w: W * 0.45, h: photoH * 0.5 },
+        { x: W * 0.55, y: photoH * 0.5, w: W * 0.45, h: photoH * 0.5 },
+      ];
+    case 'hero':
+    default:
+      return [{ x: 0, y: 0, w: W, h: photoH }];
   }
-  return cells;
 }
 
-// Hero + three: one wide hero shot on top, three panels in a row below.
-function heroPanels() {
-  const third = (1 - GUTTER * 4) / 3;
-  return [
-    { x: GUTTER, y: GUTTER, w: 1 - GUTTER * 2, h: 0.6, role: 'hero', rotate: 0 },
-    { x: GUTTER, y: 0.6 + GUTTER * 2, w: third, h: 1 - 0.6 - GUTTER * 3, role: 'cell', rotate: 0 },
-    { x: GUTTER * 2 + third, y: 0.6 + GUTTER * 2, w: third, h: 1 - 0.6 - GUTTER * 3, role: 'cell', rotate: 0 },
-    { x: GUTTER * 3 + third * 2, y: 0.6 + GUTTER * 2, w: third, h: 1 - 0.6 - GUTTER * 3, role: 'cell', rotate: 0 },
-  ];
-}
-
-// Full-bleed: a single photo edge to edge; the title floats over it.
-function bleedPanels() {
-  return [{ x: 0, y: 0, w: 1, h: 1, role: 'hero', rotate: 0 }];
-}
-
-// Tilted snapshots: a dimmed full-bleed backdrop with four overlapping
-// polaroid-style snapshots tossed across it at jaunty angles.
-function tiltedPanels() {
-  return [
-    { x: 0, y: 0, w: 1, h: 1, role: 'backdrop', rotate: 0 },
-    { x: 0.05, y: 0.06, w: 0.42, h: 0.44, role: 'snap', rotate: -6 },
-    { x: 0.52, y: 0.04, w: 0.43, h: 0.42, role: 'snap', rotate: 5 },
-    { x: 0.08, y: 0.52, w: 0.44, h: 0.42, role: 'snap', rotate: 4 },
-    { x: 0.55, y: 0.54, w: 0.4, h: 0.4, role: 'snap', rotate: -5 },
-  ];
-}
-
-const BUILDERS = { nine: ninePanels, hero: heroPanels, bleed: bleedPanels, tilted: tiltedPanels };
-
-/** Unit panels for a layout id (falls back to the nine-panel grid). */
-export function unitPanels(layoutId) {
-  return (BUILDERS[layoutId] ?? ninePanels)();
-}
-
-/** Pixel rects for a layout on a canvas of W x H, in draw order. */
-export function panelsForLayout(layoutId, W, H) {
-  return unitPanels(layoutId).map((p) => ({
-    x: p.x * W,
-    y: p.y * H,
-    w: p.w * W,
-    h: p.h * H,
-    role: p.role,
-    rotate: p.rotate,
-  }));
-}
-
-/** Index of the topmost panel containing point (px, py), or -1. */
-export function panelAt(layoutId, px, py, W, H) {
-  const panels = panelsForLayout(layoutId, W, H);
-  for (let i = panels.length - 1; i >= 0; i--) {
+// The panel that contains a point in cover coordinates, or -1 when the
+// point falls in a gutter or in the caption band. Used to select a panel
+// by clicking the preview canvas.
+export function panelAt(id, W, H, px, py) {
+  const panels = layoutPanels(id, W, H);
+  for (let i = 0; i < panels.length; i += 1) {
     const p = panels[i];
-    const cx = p.x + p.w / 2;
-    const cy = p.y + p.h / 2;
-    const rad = (-p.rotate * Math.PI) / 180;
-    const dx = px - cx;
-    const dy = py - cy;
-    const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
-    const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
-    if (Math.abs(lx) <= p.w / 2 && Math.abs(ly) <= p.h / 2) return i;
+    if (px >= p.x && px < p.x + p.w && py >= p.y && py < p.y + p.h) return i;
   }
   return -1;
 }

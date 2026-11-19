@@ -1,86 +1,73 @@
-// Bold lettering: the GTA-style caption — heavy Anton capitals with a hard
-// outline and a coloured drop shadow — plus the neon script subtitle in
-// Pacifico with a cyan glow. Everything is measured and shrunk to fit its
-// box, so a long title never spills off the cover.
+// bold-lettering.js — the big GTA-style caption. The main caption is set
+// in BebasNeue, all caps, white with a dark outline and a hot-pink drop
+// shadow, tilted a couple of degrees like a poster title. The sub-caption
+// runs underneath in Pacifico script. Everything is drawn into the caption
+// band the layouts reserve at the bottom of the cover, so the lettering
+// never fights the photos.
 
-export const TITLE_FONT = 'Anton';
-export const SCRIPT_FONT = 'Pacifico';
-
-/**
- * The largest font size (px) at which `text` fits `maxWidth`, starting from
- * `startSize` and shrinking. Returns the size; the caller sets the font.
- */
-export function fitTitleFont(ctx, text, maxWidth, startSize, family = TITLE_FONT) {
+export function fitCaptionFont(ctx, text, maxWidth, startSize, family) {
   let size = startSize;
-  ctx.font = `${size}px ${family}, sans-serif`;
-  while (size > 10 && ctx.measureText(text).width > maxWidth) {
-    size -= Math.max(1, Math.floor(size * 0.04));
-    ctx.font = `${size}px ${family}, sans-serif`;
+  ctx.font = `${size}px ${family}`;
+  while (size > 24 && ctx.measureText(text).width > maxWidth) {
+    size -= 4;
+    ctx.font = `${size}px ${family}`;
   }
   return size;
 }
 
-/**
- * Draws the title centred at (cx, baselineY): a hot-pink drop shadow, a
- * thick near-black outline, then a white fill. Returns the size it used.
- */
-export function drawTitle(ctx, text, cx, baselineY, maxWidth, startSize) {
-  const words = text.trim().toUpperCase();
-  if (!words) return 0;
-  const size = fitTitleFont(ctx, words, maxWidth, startSize);
+// Draws the caption centred in the band. Returns the baseline y of the
+// main caption, so callers can stack more type under it.
+export function drawCaption(ctx, W, H, caption, subcaption) {
+  const bandTop = H * (1 - 0.24);
+  const bandH = H - bandTop;
+  const cx = W / 2;
+
+  // Sunset wash behind the type: orange into magenta into purple, with a
+  // thin gold rule where the band meets the photos.
+  const wash = ctx.createLinearGradient(0, bandTop, W, H);
+  wash.addColorStop(0, '#ff7a18');
+  wash.addColorStop(0.45, '#ff2e63');
+  wash.addColorStop(1, '#5b2a86');
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, bandTop, W, bandH);
+  ctx.fillStyle = '#ffe66d';
+  ctx.fillRect(0, bandTop, W, Math.max(2, Math.round(H / 360)));
+
+  const main = (caption || 'VICE COAST').toUpperCase();
+  const mainSize = fitCaptionFont(ctx, main, W * 0.92, Math.round(bandH * 0.52), 'BebasNeue, "Arial Narrow", sans-serif');
+  const mainY = bandTop + bandH * 0.52;
+
   ctx.save();
+  ctx.translate(cx, mainY);
+  ctx.rotate(-0.035);
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.font = `${size}px ${TITLE_FONT}, sans-serif`;
-  const shadow = size * 0.07;
-  ctx.fillStyle = '#ff2e88';
-  ctx.fillText(words, cx + shadow, baselineY + shadow);
-  ctx.lineWidth = Math.max(2, size * 0.09);
-  ctx.strokeStyle = '#14061f';
+  ctx.textBaseline = 'middle';
+  try { ctx.letterSpacing = `${Math.max(2, Math.round(mainSize * 0.04))}px`; } catch { /* older canvas: no letter spacing */ }
+  ctx.font = `${mainSize}px BebasNeue, "Arial Narrow", sans-serif`;
+  ctx.shadowColor = 'rgba(255, 46, 99, 0.9)';
+  ctx.shadowBlur = Math.round(mainSize * 0.12);
+  ctx.shadowOffsetY = Math.round(mainSize * 0.05);
   ctx.lineJoin = 'round';
-  ctx.strokeText(words, cx, baselineY);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(words, cx, baselineY);
-  ctx.restore();
-  return size;
-}
-
-/**
- * Draws the neon script subtitle centred at (cx, baselineY): Pacifico in
- * pale cyan with a glowing shadow, over a dark pill so it reads on any photo.
- */
-export function drawNeonScript(ctx, text, cx, baselineY, maxWidth, startSize) {
-  const words = text.trim();
-  if (!words) return 0;
-  const size = fitTitleFont(ctx, words, maxWidth, startSize, SCRIPT_FONT);
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.font = `${size}px ${SCRIPT_FONT}, cursive`;
-  const w = ctx.measureText(words).width;
-  const pad = size * 0.55;
-  ctx.fillStyle = 'rgba(12, 4, 28, 0.72)';
-  roundRect(ctx, cx - w / 2 - pad, baselineY - size * 1.05, w + pad * 2, size * 1.35, size * 0.5);
-  ctx.fill();
-  ctx.shadowColor = '#37e6ff';
-  ctx.shadowBlur = size * 0.45;
-  ctx.fillStyle = '#c9f6ff';
-  ctx.fillText(words, cx, baselineY);
+  ctx.lineWidth = Math.max(4, Math.round(mainSize * 0.09));
+  ctx.strokeStyle = '#160b2e';
+  ctx.strokeText(main, 0, 0);
   ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(words, cx, baselineY);
+  ctx.fillText(main, 0, 0);
   ctx.restore();
-  return size;
-}
 
-/** Fills a rounded rectangle path on `ctx` (no fill call — the caller fills). */
-export function roundRect(ctx, x, y, w, h, radius) {
-  const r = Math.min(radius, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  if (subcaption) {
+    const subSize = Math.max(18, Math.round(bandH * 0.16));
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${subSize}px Pacifico, cursive`;
+    ctx.fillStyle = '#ffe66d';
+    ctx.shadowColor = 'rgba(22, 11, 46, 0.85)';
+    ctx.shadowBlur = Math.round(subSize * 0.15);
+    ctx.fillText(subcaption, cx, bandTop + bandH * 0.86);
+    ctx.restore();
+  }
+  return mainY;
 }

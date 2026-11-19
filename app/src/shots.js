@@ -1,22 +1,36 @@
-// Fixed scenes for screenshots: ?shot=editor shows the page with a sample
-// photo loaded; ?shot=cover shows the cover alone (the editor chrome is
-// hidden). `photo` picks the sample, `caption` the title words; `layout`,
-// `grade` and `size` are honoured by the page itself. window.__shotReady
-// is set once the cover is painted and the fonts are in.
+// shots.js — screenshot mode. The maker drives the app with URL params so
+// the four screenshots are the app's own drawing, never an edit or a
+// composite: ?shot=cover&photo=pier&caption=VICE%20COAST draws the wide
+// cover alone; ?shot=editor shows the full editor with a photo loaded;
+// ?shot=square and ?shot=portrait draw the other two post sizes.
 
-export async function runShot(shot, query, load) {
-  if (shot === 'cover') document.body.classList.add('shot-cover');
-  const photo = query.get('photo') ?? 'pier';
-  const caption = query.get('caption') ?? 'Neon Nights';
-  await load(`samples/${photo}.jpg`, caption);
-  try {
-    await document.fonts.ready;
-  } catch {
-    // A font that never arrives must not block the screenshot.
-  }
-  // Let the font-load redraw and the grade bake settle before signalling.
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    window.__shotReady = true;
-  }));
+export function readShotParams() {
+  const q = new URLSearchParams(window.location.search);
+  return {
+    shot: q.get('shot') || '',
+    photo: q.get('photo') || '',
+    caption: q.get('caption') || '',
+    subcaption: q.get('subcaption') || '',
+    layout: q.get('layout') || '',
+    grade: q.get('grade') || '',
+    size: q.get('size') || '',
+  };
+}
+
+export function shotIsCover(shot) {
+  return shot === 'cover' || shot === 'square' || shot === 'portrait';
+}
+
+// The four shots this entry ships, in the order shots.json lists them.
+// Anything else falls back to the plain editor with no shot applied.
+export function knownShot(shot) {
+  return shot === 'cover' || shot === 'editor' || shot === 'square' || shot === 'portrait';
+}
+
+// The cover size a cover shot renders at. The screenshot window is opened
+// at the same aspect, so the cover fills the frame exactly.
+export function shotCoverSize(shot) {
+  if (shot === 'square') return { w: 1080, h: 1080 };
+  if (shot === 'portrait') return { w: 1080, h: 1350 };
+  return { w: 1920, h: 1080 };
 }
