@@ -1,81 +1,69 @@
-// photo-crop.js — per-panel photo crop and position.
+// Photo crop: which photo fills each panel, and how it sits inside it.
 //
-// Every panel holds one photo plus a crop transform: a zoom level and a pan
-// offset in panel pixels. The photo is drawn cover-fit inside its panel (the
-// panel is always filled, the photo is never stretched), then zoomed about the
-// panel centre and panned by the offsets. Dragging the preview pans the
-// selected panel; the zoom slider zooms it. One photo can fill every panel,
-// or each panel can hold a different photo.
+// A placement holds a photo index plus a zoom (1 to 3) and a pan offset
+// (ox, oy in -1..1). The renderer cover-fits the photo into its panel, then
+// zooms around the offset point; dragging the preview pans the photo, and
+// the slider zooms the selected panel. At zoom 1 the photo already fills the
+// panel edge to edge, so there is nothing to pan — by design.
 
-export function defaultTransform() {
-  return { photo: 0, zoom: 1, dx: 0, dy: 0 };
+/** Fresh placements for `count` panels: no photo yet, zoom 1, centred. */
+export function createPlacements(count) {
+  return Array.from({ length: count }, () => ({ photo: -1, zoom: 1, ox: 0, oy: 0 }));
 }
 
-// Builds the slot list for a layout: one transform per panel, all starting on
-// the first photo. When the layout changes the caller re-seeds the slots from
-// this, keeping the photos the user already picked where the counts line up.
-export function defaultSlots(count, photoCount) {
-  const slots = [];
-  for (let i = 0; i < count; i += 1) {
-    slots.push({ photo: photoCount > 0 ? i % photoCount : 0, zoom: 1, dx: 0, dy: 0 });
-  }
-  return slots;
+/**
+ * The source rectangle of a photo (in its own pixels) that cover-fits a
+ * panel of panelW x panelH at the placement's zoom and pan. Draw it with
+ * drawImage(img, sx, sy, sw, sh, panelX, panelY, panelW, panelH).
+ */
+export function coverSourceRect(photoW, photoH, panelW, panelH, placement) {
+  const zoom = placement.zoom || 1;
+  const scale = Math.max(panelW / photoW, panelH / photoH) * zoom;
+  const sw = Math.min(photoW, panelW / scale);
+  const sh = Math.min(photoH, panelH / scale);
+  const slackX = Math.max(0, photoW - sw);
+  const slackY = Math.max(0, photoH - sh);
+  const sx = Math.min(Math.max(0, (photoW - sw) / 2 + (placement.ox || 0) * slackX * 0.5), slackX);
+  // Faces sit in the upper half of most photos: while the user has not
+  // panned, bias the window a little toward the top, fading to nothing as
+  // they pan toward either edge, so a head is not the first thing cropped.
+  const oy = placement.oy || 0;
+  const topBias = 0.15 * (1 - Math.abs(oy));
+  const sy = Math.min(Math.max(0, slackY * (0.5 + oy * 0.5 - topBias)), slackY);
+  return { sx, sy, sw, sh };
 }
 
-// Clamps a pan so the photo can never be dragged out of its panel: at the
-// current zoom the photo must still cover the whole panel.
-export function clampTransform(transform, photo, rect) {
-  if (!photo || !photo.naturalWidth) return transform;
-  const base = Math.max(rect.w / photo.naturalWidth, rect.h / photo.naturalHeight);
-  const pw = photo.naturalWidth * base * transform.zoom;
-  const ph = photo.naturalHeight * base * transform.zoom;
-  const maxDx = Math.max(0, (pw - rect.w) / 2);
-  const maxDy = Math.max(0, (ph - rect.h) / 2);
-  return {
-    ...transform,
-    zoom: Math.min(3, Math.max(1, transform.zoom)),
-    dx: Math.min(maxDx, Math.max(-maxDx, transform.dx)),
-    dy: Math.min(maxDy, Math.max(-maxDy, transform.dy)),
-  };
+/**
+ * Pans a placement by a drag of dx, dy canvas pixels inside a panel of
+ * panelW x panelH. The pan is scaled by the zoomed photo's slack, so a drag
+ * across the whole panel pans the photo edge to edge.
+ */
+export function panPlacement(placement, dx, dy, panelW, panelH) {
+  const zoom = placement.zoom || 1;
+  placement.ox = clamp(placement.ox + (dx / panelW) * 2 * zoom, -1, 1);
+  placement.oy = clamp(placement.oy + (dy / panelH) * 2 * zoom, -1, 1);
+  return placement;
 }
 
-// Draws one photo into its panel with the panel's crop transform. When there
-// is no photo yet the panel is left as a deep plum placeholder with a thin
-// frame, so an empty cover still reads as a poster grid.
-export function drawCroppedPhoto(ctx, photo, rect, transform) {
-  if (!photo || !photo.naturalWidth) {
-    ctx.save();
-    ctx.fillStyle = '#2b1838';
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = Math.max(1, rect.w * 0.004);
-    ctx.strokeRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
-    ctx.restore();
-    return;
-  }
-  const t = clampTransform(transform, photo, rect);
-  const base = Math.max(rect.w / photo.naturalWidth, rect.h / photo.naturalHeight);
-  const pw = photo.naturalWidth * base * t.zoom;
-  const ph = photo.naturalHeight * base * t.zoom;
-  const dx = rect.x + (rect.w - pw) / 2 + t.dx;
-  const dy = rect.y + (rect.h - ph) / 2 + t.dy;
-  ctx.save();
-  if (rect.rot) {
-    ctx.translate(rect.x + rect.w / 2, rect.y + rect.h / 2);
-    ctx.rotate(rect.rot);
-    ctx.translate(-(rect.x + rect.w / 2), -(rect.y + rect.h / 2));
-  }
-  ctx.drawImage(photo, dx, dy, pw, ph);
-  ctx.restore();
+/** Points a panel at a photo (photoIndex -1 empties it). */
+export function assignPhoto(placements, panelIndex, photoIndex) {
+  if (placements[panelIndex]) placements[panelIndex].photo = photoIndex;
+  return placements;
 }
 
-// Hit test: which panel contains a point in cover pixels. Rotation is ignored
-// on purpose — the tilted frames are hit by their upright bounding box, which
-// is what a finger expects.
-export function panelAtPoint(panels, px, py) {
-  for (let i = panels.length - 1; i >= 0; i -= 1) {
-    const r = panels[i];
-    if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
-  }
-  return -1;
+/** Fills every panel with the same photo, keeping each panel's zoom. */
+export function fillAllWith(placements, photoIndex) {
+  for (const p of placements) p.photo = photoIndex;
+  return placements;
+}
+
+/** Grows placements to `count` panels (new panels start empty). */
+export function resizePlacements(placements, count) {
+  while (placements.length < count) placements.push({ photo: -1, zoom: 1, ox: 0, oy: 0 });
+  placements.length = count;
+  return placements;
+}
+
+function clamp(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
 }

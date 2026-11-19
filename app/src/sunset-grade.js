@@ -1,98 +1,120 @@
-// sunset-grade.js — the sunset and neon colour grades.
+// Sunset grades: gradient-map colour grades for the Vice City look.
 //
-// A grade is a small palette: a sky gradient for bare backgrounds, a warm wash
-// that rises from the bottom of the cover, and an overlay tint that pushes the
-// photos toward the grade's mood. Grades are applied as canvas gradients with
-// blend modes, never as a filter on the photo itself, so the export stays fast
-// at 1920 x 1080 and the same code grades the preview and the PNG.
+// Each grade is a ramp of [luminance, red, green, blue] stops. A pixel's
+// luminance is mapped through the ramp, so shadows take the deep colour and
+// highlights the hot one — the classic duotone sunset treatment. Grades are
+// baked once per photo into a graded canvas (gradedPhoto), which the panel
+// renderer then crops and positions for free.
 
 export const GRADES = [
-  {
-    id: 'vice', name: 'Vice Sunset', swatch: 'linear-gradient(135deg,#2b1055,#ff7e5f,#feb47b)',
-    skyTop: '#2b1055', skyBottom: '#ff7e5f',
-    washTop: 'rgba(255,126,95,0)', washBottom: 'rgba(255,94,98,0.55)',
-    tint: 'rgba(255,110,90,0.20)', tintMode: 'overlay', warm: 0.5,
-  },
-  {
-    id: 'neon', name: 'Neon Nights', swatch: 'linear-gradient(135deg,#0f0524,#ff2e88,#00e5ff)',
-    skyTop: '#0f0524', skyBottom: '#3b0a6e',
-    washTop: 'rgba(255,46,136,0)', washBottom: 'rgba(255,46,136,0.5)',
-    tint: 'rgba(0,229,255,0.16)', tintMode: 'overlay', warm: 0.35,
-  },
-  {
-    id: 'pink', name: 'Hot Pink', swatch: 'linear-gradient(135deg,#3d0a3d,#ff2e88,#ff8ac2)',
-    skyTop: '#3d0a3d', skyBottom: '#ff2e88',
-    washTop: 'rgba(255,46,136,0)', washBottom: 'rgba(255,46,136,0.55)',
-    tint: 'rgba(255,46,136,0.22)', tintMode: 'soft-light', warm: 0.45,
-  },
-  {
-    id: 'teal', name: 'Teal Noir', swatch: 'linear-gradient(135deg,#04263b,#0e7c86,#f2c14e)',
-    skyTop: '#04263b', skyBottom: '#0e7c86',
-    washTop: 'rgba(14,124,134,0)', washBottom: 'rgba(242,193,78,0.4)',
-    tint: 'rgba(14,124,134,0.20)', tintMode: 'overlay', warm: 0.3,
-  },
-  {
-    id: 'gold', name: 'Golden Hour', swatch: 'linear-gradient(135deg,#3b1d05,#ff9a3d,#ffd76e)',
-    skyTop: '#3b1d05', skyBottom: '#ff9a3d',
-    washTop: 'rgba(255,154,61,0)', washBottom: 'rgba(255,154,61,0.55)',
-    tint: 'rgba(255,180,80,0.22)', tintMode: 'soft-light', warm: 0.6,
-  },
-  {
-    id: 'mono', name: 'Midnight Mono', swatch: 'linear-gradient(135deg,#0a0a0f,#3a3a4a,#c9c9d6)',
-    skyTop: '#0a0a0f', skyBottom: '#3a3a4a',
-    washTop: 'rgba(120,120,150,0)', washBottom: 'rgba(120,120,150,0.4)',
-    tint: 'rgba(90,90,120,0.18)', tintMode: 'overlay', warm: 0.15,
-  },
+  { id: 'vice', label: 'Vice Sunset' },
+  { id: 'neon', label: 'Neon Nights' },
+  { id: 'pink', label: 'Hot Pink' },
+  { id: 'dusk', label: 'Palm Dusk' },
+  { id: 'drive', label: 'Ocean Drive' },
+  { id: 'chrome', label: 'Midnight Chrome' },
 ];
 
-export function gradeById(id) {
-  return GRADES.find((entry) => entry.id === id) ?? GRADES[0];
+// [luminance 0..1, red, green, blue] — shadows first, highlights last.
+const RAMPS = {
+  vice: [
+    [0.0, 26, 8, 46],
+    [0.3, 94, 22, 96],
+    [0.55, 214, 46, 120],
+    [0.78, 255, 128, 64],
+    [1.0, 255, 222, 138],
+  ],
+  neon: [
+    [0.0, 6, 4, 28],
+    [0.3, 58, 16, 120],
+    [0.55, 178, 32, 190],
+    [0.78, 255, 64, 160],
+    [1.0, 190, 240, 255],
+  ],
+  pink: [
+    [0.0, 40, 6, 42],
+    [0.3, 122, 18, 92],
+    [0.55, 232, 48, 130],
+    [0.78, 255, 140, 130],
+    [1.0, 255, 244, 230],
+  ],
+  dusk: [
+    [0.0, 14, 18, 52],
+    [0.3, 26, 84, 96],
+    [0.55, 214, 130, 52],
+    [0.78, 255, 178, 96],
+    [1.0, 255, 240, 200],
+  ],
+  drive: [
+    [0.0, 6, 34, 52],
+    [0.3, 14, 110, 128],
+    [0.55, 64, 190, 178],
+    [0.78, 255, 120, 92],
+    [1.0, 255, 228, 178],
+  ],
+  chrome: [
+    [0.0, 22, 24, 34],
+    [0.3, 70, 84, 112],
+    [0.55, 150, 168, 196],
+    [0.78, 214, 226, 238],
+    [1.0, 244, 250, 255],
+  ],
+};
+
+/** A 256-step lookup table for a grade: { r, g, b } Uint8Arrays. */
+export function lutForGrade(gradeId) {
+  const ramp = RAMPS[gradeId] ?? RAMPS.vice;
+  const r = new Uint8Array(256);
+  const g = new Uint8Array(256);
+  const b = new Uint8Array(256);
+  for (let level = 0; level < 256; level++) {
+    const t = level / 255;
+    let seg = 0;
+    while (seg < ramp.length - 2 && t > ramp[seg + 1][0]) seg++;
+    const [t0, r0, g0, b0] = ramp[seg];
+    const [t1, r1, g1, b1] = ramp[seg + 1];
+    const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+    r[level] = Math.round(r0 + (r1 - r0) * f);
+    g[level] = Math.round(g0 + (g1 - g0) * f);
+    b[level] = Math.round(b0 + (b1 - b0) * f);
+  }
+  return { r, g, b };
 }
 
-// Paints a grade's sky behind a layout that leaves background showing
-// (the tilted snapshots) or behind an empty photo panel.
-export function paintGradeSky(ctx, grade, W, H) {
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, grade.skyTop);
-  sky.addColorStop(1, grade.skyBottom);
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
+/** Maps every pixel of `data` through the grade's lookup table, in place. */
+export function applyGradeToPixels(data, gradeId) {
+  const { r, g, b } = lutForGrade(gradeId);
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+    data[i] = r[lum];
+    data[i + 1] = g[lum];
+    data[i + 2] = b[lum];
+  }
 }
 
-// Pushes the finished photo layer toward the grade: a warm wash rising from
-// the bottom, then the grade tint blended over the whole cover.
-export function applySunsetGrade(ctx, grade, W, H) {
-  const wash = ctx.createLinearGradient(0, H * 0.35, 0, H);
-  wash.addColorStop(0, grade.washTop);
-  wash.addColorStop(1, grade.washBottom);
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = wash;
-  ctx.fillRect(0, 0, W, H);
-  ctx.globalCompositeOperation = grade.tintMode;
-  ctx.fillStyle = grade.tint;
-  ctx.fillRect(0, 0, W, H);
-  ctx.restore();
-}
+const gradedCache = new Map();
 
-// Grades a single panel rect instead of the whole cover: the same wash and
-// tint, clipped to the panel, so a grid keeps one consistent mood even when
-// its photos come from different places. The cover-level pass in
-// applySunsetGrade still runs after, at a lighter hand, to tie the panels
-// together with the title band.
-export function gradePanel(ctx, grade, rect) {
-  const { x, y, w, h } = rect;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, w, h);
-  ctx.clip();
-  const wash = ctx.createLinearGradient(0, y + h * 0.3, 0, y + h);
-  wash.addColorStop(0, grade.washTop);
-  wash.addColorStop(1, grade.washBottom);
-  ctx.fillStyle = wash;
-  ctx.fillRect(x, y, w, h);
-  ctx.globalCompositeOperation = grade.tintMode;
-  ctx.fillStyle = grade.tint;
-  ctx.fillRect(x, y, w, h);
-  ctx.restore();
+/**
+ * The photo re-graded through `gradeId`, as a canvas capped at 1600 px on
+ * its long side (grading a full 4000 px phone photo would stall the editor).
+ * Cached per photo + grade, so a redraw only re-crops, never re-grades.
+ */
+export function gradedPhoto(img, gradeId) {
+  const key = `${img.src}::${gradeId}`;
+  const hit = gradedCache.get(key);
+  if (hit) return hit;
+  const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const frame = ctx.getImageData(0, 0, w, h);
+  applyGradeToPixels(frame.data, gradeId);
+  ctx.putImageData(frame, 0, 0);
+  if (gradedCache.size > 24) gradedCache.clear();
+  gradedCache.set(key, canvas);
+  return canvas;
 }

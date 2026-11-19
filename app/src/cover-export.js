@@ -1,155 +1,186 @@
-// cover-export.js — renders the cover and exports the PNGs.
+// Cover export: draws the whole cover and writes the PNGs.
 //
-// renderCover is the one function that paints a cover: it takes the editor
-// state and a canvas at any size, and draws the layout's panels, the grade,
-// the halftone title block, the lettering, the heat meter, the ribbon and the
-// print finish, in that order. The live preview calls it at preview size; the
-// export calls it at 1080 x 1080, 1080 x 1350 and 1920 x 1080, so what the
-// screenshots show is exactly what the PNGs hold.
+// renderCover(canvas, state, photos) paints one cover at the canvas's own
+// size: panels first (each photo graded, cropped and positioned), then the
+// halftone title block, neon subtitle, heat meter and badge ribbon, then
+// grain and vignette. exportCover renders offscreen at an exact post size
+// and returns a PNG Blob; exportAllCovers renders all three post sizes at
+// once, so one click gives the square, portrait and wide PNGs.
 
-import { layoutGeometry } from './panel-layouts.js';
-import { gradeById, paintGradeSky, applySunsetGrade, gradePanel } from './sunset-grade.js';
-import { drawHalftoneTitleBlock, drawTitleScrim } from './halftone-title.js';
-import { drawCoverTitle, drawNeonSubtitle, drawStars, drawRibbon, drawFooterLine } from './bold-lettering.js';
-import { drawCroppedPhoto } from './photo-crop.js';
-import { drawGrain, drawVignette, drawGlowFrame } from './neon-effects.js';
+import { panelsForLayout } from './panel-layouts.js';
+import { gradedPhoto } from './sunset-grade.js';
+import { coverSourceRect } from './photo-crop.js';
+import { drawTitleBlock } from './halftone-title.js';
+import { drawNeonScript } from './bold-lettering.js';
+import { drawGrain, drawVignette, drawHeatMeter, drawBadgeRibbon } from './neon-effects.js';
 
-export const SIZES = [
-  { id: 'square', label: 'Square 1080 x 1080', w: 1080, h: 1080 },
-  { id: 'portrait', label: 'Portrait 1080 x 1350', w: 1080, h: 1350 },
-  { id: 'wide', label: 'Wide 1920 x 1080', w: 1920, h: 1080 },
-];
+export const SIZES = {
+  square: { w: 1080, h: 1080, label: '1080 x 1080' },
+  portrait: { w: 1080, h: 1350, label: '1080 x 1350' },
+  wide: { w: 1920, h: 1080, label: '1920 x 1080' },
+};
 
-// Which photo a slot shows: in fill-one mode every slot shows the first photo;
-// in per-panel mode each slot shows its own assigned photo.
-export function resolvePhoto(state, slotIndex) {
-  if (!state.photos || state.photos.length === 0) return null;
-  if (state.fillOne) return state.photos[0].img;
-  const slot = state.slots[slotIndex];
-  const index = slot ? slot.photo % state.photos.length : 0;
-  return state.photos[index].img;
-}
-
-// Draws one polaroid frame: a white border rotated with the panel, the photo
-// inset inside it, and a small caption strip along the bottom.
-function drawPolaroid(ctx, photo, rect, transform, caption) {
-  const b = rect.border || 0;
+/** Paints one photo (already graded) into a panel rect, honouring rotation. */
+function drawPanelPhoto(ctx, panel, graded, placement) {
+  const src = coverSourceRect(graded.width, graded.height, panel.w, panel.h, placement);
   ctx.save();
-  ctx.translate(rect.x + rect.w / 2, rect.y + rect.h / 2);
-  ctx.rotate(rect.rot || 0);
-  ctx.translate(-(rect.x + rect.w / 2), -(rect.y + rect.h / 2));
-  ctx.fillStyle = '#fdfbf7';
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = b * 0.9;
-  ctx.shadowOffsetY = b * 0.35;
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.translate(panel.x + panel.w / 2, panel.y + panel.h / 2);
+  if (panel.rotate) ctx.rotate((panel.rotate * Math.PI) / 180);
+  ctx.drawImage(graded, src.sx, src.sy, src.sw, src.sh, -panel.w / 2, -panel.h / 2, panel.w, panel.h);
   ctx.restore();
-  const inner = {
-    x: rect.x + b,
-    y: rect.y + b,
-    w: rect.w - b * 2,
-    h: rect.h - b * 3.4,
-    rot: rect.rot || 0,
-  };
-  drawCroppedPhoto(ctx, photo, inner, transform);
-  if (caption) {
-    ctx.save();
-    ctx.translate(rect.x + rect.w / 2, rect.y + rect.h / 2);
-    ctx.rotate(rect.rot || 0);
-    ctx.translate(-(rect.x + rect.w / 2), -(rect.y + rect.h / 2));
-    ctx.fillStyle = '#2b2b33';
-    ctx.font = `400 ${Math.max(12, b * 1.1)}px "Bebas Neue", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(caption.toUpperCase(), rect.x + rect.w / 2, rect.y + rect.h - b * 1.25);
-    ctx.restore();
-  }
 }
 
-// Paints the whole cover onto the canvas at its own size. The order matters:
-// sky, panels, per-panel grade, whole-cover grade, title scrim or halftone
-// band, lettering, ribbon, then the print finish (grain, vignette, glow frame).
-export function renderCover(canvas, state, W, H) {
-  canvas.width = W;
-  canvas.height = H;
+/** Fills an empty panel with a dusk gradient and a faint plus mark. */
+function drawEmptyPanel(ctx, panel) {
+  const g = ctx.createLinearGradient(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
+  g.addColorStop(0, '#3a1c5e');
+  g.addColorStop(1, '#7a1e5e');
+  ctx.save();
+  ctx.translate(panel.x + panel.w / 2, panel.y + panel.h / 2);
+  if (panel.rotate) ctx.rotate((panel.rotate * Math.PI) / 180);
+  ctx.fillStyle = g;
+  ctx.fillRect(-panel.w / 2, -panel.h / 2, panel.w, panel.h);
+  const arm = Math.min(panel.w, panel.h) * 0.16;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.lineWidth = Math.max(3, arm * 0.14);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-arm, 0);
+  ctx.lineTo(arm, 0);
+  ctx.moveTo(0, -arm);
+  ctx.lineTo(0, arm);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** The white polaroid frame around a tilted snapshot (photo already drawn). */
+function drawSnapFrame(ctx, panel) {
+  const frame = Math.max(4, Math.min(panel.w, panel.h) * 0.045);
+  const chin = Math.max(8, Math.min(panel.w, panel.h) * 0.16);
+  ctx.save();
+  ctx.translate(panel.x + panel.w / 2, panel.y + panel.h / 2);
+  if (panel.rotate) ctx.rotate((panel.rotate * Math.PI) / 180);
+  ctx.fillStyle = '#f8f2e8';
+  ctx.fillRect(-panel.w / 2 - frame, -panel.h / 2 - frame, panel.w + frame * 2, panel.h + frame + chin);
+  ctx.restore();
+  // The photo sits on top of the frame's top part; redraw it inset so the
+  // white border shows around it.
+  ctx.save();
+  ctx.translate(panel.x + panel.w / 2, panel.y + panel.h / 2);
+  if (panel.rotate) ctx.rotate((panel.rotate * Math.PI) / 180);
+  ctx.fillStyle = '#f8f2e8';
+  ctx.fillRect(-panel.w / 2 - frame, panel.h / 2, panel.w + frame * 2, chin);
+  ctx.restore();
+}
+
+/**
+ * Paints the whole cover onto `canvas` at its own size.
+ * `state`: { layout, grade, title, subtitle, badge, heat, grain, vignette, placements }
+ * `photos`: array of HTMLImageElement (or null) indexed by placement.photo.
+ */
+export function renderCover(canvas, state, photos) {
   const ctx = canvas.getContext('2d');
-  const grade = gradeById(state.grade);
-  const geo = layoutGeometry(state.layout, W, H);
-  paintGradeSky(ctx, grade, W, H);
-  geo.panels.forEach((panel, i) => {
-    const slot = state.slots[i] ?? { photo: 0, zoom: 1, dx: 0, dy: 0 };
-    const photo = resolvePhoto(state, i);
-    if (panel.border) {
-      const name = photo && state.photos[slot.photo % state.photos.length]
-        ? state.photos[slot.photo % state.photos.length].name.replace(/\.[^.]+$/, '')
-        : '';
-      drawPolaroid(ctx, photo, panel, slot, name);
-    } else {
-      drawCroppedPhoto(ctx, photo, panel, slot);
+  const W = canvas.width;
+  const H = canvas.height;
+  const panels = panelsForLayout(state.layout, W, H);
+
+  // White gutters: the comic-book seams between panels.
+  ctx.fillStyle = '#f5ecff';
+  ctx.fillRect(0, 0, W, H);
+
+  for (let i = 0; i < panels.length; i++) {
+    const panel = panels[i];
+    const placement = state.placements[i] ?? { photo: -1, zoom: 1, ox: 0, oy: 0 };
+    const photo = placement.photo >= 0 ? photos[placement.photo] : null;
+    if (panel.role === 'backdrop') {
+      // The tilted layout's backdrop: dimmed, so the snapshots pop.
+      if (photo) {
+        const graded = gradedPhoto(photo, state.grade);
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        drawPanelPhoto(ctx, panel, graded, placement);
+        ctx.restore();
+        ctx.fillStyle = 'rgba(16, 5, 32, 0.35)';
+        ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+      } else {
+        const g = ctx.createLinearGradient(0, 0, W, H);
+        g.addColorStop(0, '#2b0f45');
+        g.addColorStop(1, '#12081f');
+        ctx.fillStyle = g;
+        ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+      }
+      continue;
     }
-    if (photo) gradePanel(ctx, grade, panel);
-  });
-  if (geo.frame) {
+    if (panel.role === 'snap') drawSnapFrame(ctx, panel);
+    if (photo) {
+      const graded = gradedPhoto(photo, state.grade);
+      drawPanelPhoto(ctx, panel, graded, placement);
+    } else {
+      drawEmptyPanel(ctx, panel);
+    }
+    // A crisp white seam around every panel.
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-    ctx.lineWidth = Math.max(2, W * 0.003);
-    ctx.strokeRect(geo.frame.x, geo.frame.y, geo.frame.w, geo.frame.h);
+    ctx.translate(panel.x + panel.w / 2, panel.y + panel.h / 2);
+    if (panel.rotate) ctx.rotate((panel.rotate * Math.PI) / 180);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, Math.min(W, H) * 0.004);
+    ctx.strokeRect(-panel.w / 2, -panel.h / 2, panel.w, panel.h);
     ctx.restore();
   }
-  applySunsetGrade(ctx, grade, W, H);
-  if (geo.scrim) {
-    drawTitleScrim(ctx, W, H, Math.round(H * 0.62));
-  } else {
-    drawHalftoneTitleBlock(ctx, geo.title);
-  }
-  drawNeonSubtitle(ctx, state.subtitle, geo.subtitle);
-  drawCoverTitle(ctx, state.title, geo.title);
-  drawStars(ctx, geo.stars.x, geo.stars.y, geo.stars.size, state.heat);
-  if (state.layout === 'nine' || state.layout === 'hero') {
-    drawFooterLine(ctx, state.footer, geo.title.x + geo.title.w / 2, geo.title.y + geo.title.h * 0.90, geo.title.w * 0.8, Math.round(H * 0.016));
-  }
-  if (state.badge) drawRibbon(ctx, W, H, geo.ribbon.corner, geo.ribbon.text);
+
+  // Lettering and effects float over the panels, poster-style.
+  const minSide = Math.min(W, H);
+  const titleSize = minSide * 0.115;
+  const blockH = drawTitleBlock(ctx, W / 2, H - minSide * 0.245, W * 0.9, state.title, titleSize);
+  const subSize = minSide * 0.042;
+  drawNeonScript(ctx, state.subtitle, W / 2, H - minSide * 0.245 - minSide * 0.028, W * 0.86, subSize);
+  drawHeatMeter(ctx, W * 0.1, H * 0.055, minSide * 0.02, state.heat);
+  drawBadgeRibbon(ctx, state.badge, W * 0.87, H * 0.055, -8, minSide * 0.045);
   if (state.grain) drawGrain(ctx, W, H, 0.07);
   if (state.vignette) drawVignette(ctx, W, H, 0.42);
-  drawGlowFrame(ctx, W, H);
-  return canvas;
+  return blockH;
 }
 
-// Renders one size offscreen and returns its PNG blob.
-export function exportPNG(state, size) {
+/** Renders one cover at an exact post size and returns its PNG Blob. */
+export function exportCover(state, photos, sizeKey) {
+  const size = SIZES[sizeKey];
   const canvas = document.createElement('canvas');
-  renderCover(canvas, state, size.w, size.h);
+  canvas.width = size.w;
+  canvas.height = size.h;
+  renderCover(canvas, state, photos);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('export failed'))), 'image/png');
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('PNG encode failed'))), 'image/png');
   });
 }
 
-function downloadBlob(blob, filename) {
+/**
+ * Renders all three post sizes at once. Returns [{ key, name, blob, width,
+ * height }] and records the run on window.__lastExport for verification.
+ */
+export async function exportAllCovers(state, photos) {
+  const out = [];
+  for (const key of Object.keys(SIZES)) {
+    const size = SIZES[key];
+    const blob = await exportCover(state, photos, key);
+    out.push({ key, name: `vice-coast-cover-${size.w}x${size.h}.png`, blob, width: size.w, height: size.h });
+  }
+  window.__lastExport = out.map(({ key, name, width, height, blob }) => ({
+    key, name, width, height, bytes: blob.size,
+  }));
+  // The Blob objects themselves, so a test harness can read the PNG bytes
+  // back and check their true dimensions from the IHDR chunk.
+  window.__lastExportBlobs = out;
+  return out;
+}
+
+/** Triggers a browser download of a Blob under `name`. */
+export function downloadBlob(blob, name) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = name;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-// Exports one size as a PNG download.
-export async function exportSize(state, sizeId) {
-  const size = SIZES.find((entry) => entry.id === sizeId) ?? SIZES[0];
-  const blob = await exportPNG(state, size);
-  downloadBlob(blob, `neon-coast-${size.id}-${size.w}x${size.h}.png`);
-  return blob;
-}
-
-// Exports all three post sizes at once: the one-click path from a photo to
-// share-ready PNGs.
-export async function exportAllSizes(state, onEach) {
-  const made = [];
-  for (const size of SIZES) {
-    const blob = await exportPNG(state, size);
-    downloadBlob(blob, `neon-coast-${size.id}-${size.w}x${size.h}.png`);
-    made.push({ size, blob });
-    if (onEach) onEach(size, blob);
-  }
-  return made;
 }
